@@ -3,20 +3,19 @@ import pyodbc
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
+import re
+import logging
+import traceback
+import json
+from PIL import Image, ImageTk
 
-# === CONFIGURATION ===
-SQL_CONN_STR = (
-    'DRIVER={ODBC Driver 17 for SQL Server};'
-    'SERVER=192.168.0.53;'
-    'DATABASE=portal;'
-    'UID=sanblueuat;'
-    'PWD=Admin^portal'
-)
+# === LOAD CONFIG ===
+with open("config.json", "r") as f:
+    config = json.load(f)
+SQL_CONN_STR = config["SQL_CONN_STR"]
 
-# === TOGGLE: Use custom schema or dynamic NVARCHAR(MAX)
-USE_CUSTOM_COLUMNS = False  # Set to False for dynamic schema
+USE_CUSTOM_COLUMNS = False
 
-# === Custom SQL column definitions (used only if USE_CUSTOM_COLUMNS is True)
 CUSTOM_COLUMNS = {
     "contact_person": "NVARCHAR(255)",
     "company": "NVARCHAR(255)",
@@ -26,7 +25,6 @@ CUSTOM_COLUMNS = {
     "zip": "NVARCHAR(20)"
 }
 
-# === Optional: Mapping from Excel column names to custom schema
 EXCEL_TO_CUSTOM_MAP = {
     "person": "contact_person",
     "companyname": "company",
@@ -36,12 +34,76 @@ EXCEL_TO_CUSTOM_MAP = {
     "pincode": "zip"
 }
 
-# === UTILITIES ===
+logging.basicConfig(filename='importer.log', level=logging.INFO,
+                    format='%(asctime)s:%(levelname)s:%(message)s')
+
+
+class SQLImporter:
+    def __init__(self, conn_str):
+        self.conn_str = conn_str
+        self.conn = None
+        self.cursor = None
+
+    def connect(self):
+        self.conn = pyodbc.connect(self.conn_str)
+        self.cursor = self.conn.cursor()
+
+    def close(self):
+        if self.cursor: self.cursor.close()
+        if self.conn: self.conn.close()
+
+    def table_exists(self, table_name):
+        self.cursor.execute(f"SELECT OBJECT_ID(N'{table_name}', N'U')")
+        return self.cursor.fetchone()[0] is not None
+
+    def get_existing_columns(self, table_name):
+        self.cursor.execute(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?", table_name)
+        return [row[0] for row in self.cursor.fetchall()]
+
+    def create_table(self, table_name, df):
+        if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
+            raise ValueError("Invalid table name. Use only alphanumeric characters and underscores.")
+        column_defs = ",\n    ".join([f"[{col}] {map_dtype_to_sql(col, df[col])}" for col in df.columns])
+        create_sql = f"CREATE TABLE [{table_name}] (\n    {column_defs}\n);"
+        logging.info(f"Creating table:\n{create_sql}")
+        self.cursor.execute(create_sql)
+        self.conn.commit()
+
+    def drop_table(self, table_name):
+        self.cursor.execute(f"DROP TABLE [{table_name}]")
+        self.conn.commit()
+
+    def insert_data(self, table_name, df):
+        columns = ", ".join(f"[{col}]" for col in df.columns)
+        placeholders = ", ".join("?" for _ in df.columns)
+        insert_sql = f"INSERT INTO [{table_name}] ({columns}) VALUES ({placeholders})"
+        try:
+            self.cursor.fast_executemany = True
+            self.cursor.executemany(insert_sql, df.values.tolist())
+        except Exception as e:
+            logging.error(f"Batch insert failed: {e}. Trying row-by-row...")
+            for i, row in df.iterrows():
+                try:
+                    self.cursor.execute(insert_sql, tuple(row))
+                except Exception as row_error:
+                    logging.error(f"Row {i} failed: {row.to_dict()} | Error: {row_error}")
+            raise e
+
+
 def sanitize_column_name(col):
-    return col.strip().replace(" ", "").replace(".", "_").replace(";", "_").replace("-", "_").replace(":", "").lower()
+    return re.sub(r'[^a-zA-Z0-9_]', '', col.strip().replace(" ", "_").lower())
+
 
 def map_dtype_to_sql(col_name, col_data=None):
-    return "NVARCHAR(MAX)"  # Always fallback to NVARCHAR(MAX)
+    if col_data is not None:
+        if pd.api.types.is_integer_dtype(col_data):
+            return "BIGINT"
+        elif pd.api.types.is_float_dtype(col_data):
+            return "FLOAT"
+        elif pd.api.types.is_datetime64_any_dtype(col_data):
+            return "DATETIME"
+    return "NVARCHAR(MAX)"
+
 
 def clean_dataframe(df):
     df = df.where(pd.notnull(df), None)
@@ -51,12 +113,14 @@ def clean_dataframe(df):
     df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) else None)
     return df
 
+
 def map_custom_columns(df):
     df = df.rename(columns=EXCEL_TO_CUSTOM_MAP)
     df = df[[col for col in CUSTOM_COLUMNS if col in df.columns]]
     df = df.where(pd.notnull(df), None)
     df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) else None)
     return df
+
 
 def read_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
@@ -67,53 +131,17 @@ def read_file(file_path):
     else:
         raise ValueError("Unsupported file format. Use .csv or .xlsx")
 
-def create_table_force(cursor, conn, table_name, df):
-    cursor.execute(f"IF OBJECT_ID(N'{table_name}', N'U') IS NOT NULL DROP TABLE [{table_name}]")
-    conn.commit()
 
-    if USE_CUSTOM_COLUMNS:
-        print("\n📊 Using custom schema:")
-        for col, sql_type in CUSTOM_COLUMNS.items():
-            print(f" - {col}: {sql_type}")
-        column_defs = ",\n    ".join([f"[{col}] {sql_type}" for col, sql_type in CUSTOM_COLUMNS.items()])
-    else:
-        print("\n📊 Using dynamic NVARCHAR(MAX) columns:")
-        for col in df.columns:
-            print(f" - {col}: NVARCHAR(MAX)")
-        column_defs = ",\n    ".join([f"[{col}] {map_dtype_to_sql(col)}" for col in df.columns])
-
-    create_sql = f"CREATE TABLE [{table_name}] (\n    {column_defs}\n);"
-    print("\n📝 CREATE TABLE SQL:\n", create_sql)
-    cursor.execute(create_sql)
-    conn.commit()
-
-def insert_data(cursor, table_name, df):
-    columns = ", ".join(f"[{col}]" for col in df.columns)
-    placeholders = ", ".join("?" for _ in df.columns)
-    insert_sql = f"INSERT INTO [{table_name}] ({columns}) VALUES ({placeholders})"
-
-    try:
-        print(f"\n🚀 Inserting {len(df)} rows using batch...")
-        cursor.fast_executemany = True
-        cursor.executemany(insert_sql, df.values.tolist())
-    except Exception as e:
-        print("❌ Batch insert failed. Falling back to row-by-row insert...")
-        for i, row in df.iterrows():
-            try:
-                cursor.execute(insert_sql, tuple(row))
-            except Exception as row_error:
-                print(f"❌ Row {i} failed: {row.to_dict()} | Error: {row_error}")
-        raise e
-
-# === GUI FUNCTIONS ===
 def browse_file():
     file_path = filedialog.askopenfilename(filetypes=[("CSV & Excel files", "*.csv *.xlsx *.xls")])
     file_entry.delete(0, tk.END)
     file_entry.insert(0, file_path)
 
+
 def import_data():
     file_path = file_entry.get().strip()
     table_name = table_entry.get().strip()
+    preview_count = int(preview_dropdown.get())
 
     if not file_path or not table_name:
         messagebox.showwarning("Missing info", "Please select a file and enter a table name.")
@@ -123,36 +151,49 @@ def import_data():
         df = read_file(file_path)
         df.columns = [sanitize_column_name(col) for col in df.columns]
         df = clean_dataframe(df)
-
         if USE_CUSTOM_COLUMNS:
             df = map_custom_columns(df)
 
-        global conn
-        conn = pyodbc.connect(SQL_CONN_STR)
-        cursor = conn.cursor()
+        importer = SQLImporter(SQL_CONN_STR)
+        importer.connect()
 
-        create_table_force(cursor, conn, table_name, df)
-        insert_data(cursor, table_name, df)
-        conn.commit()
+        if importer.table_exists(table_name):
+            choice = messagebox.askyesnocancel("Table Exists", f"Table '{table_name}' already exists.\nYes = Drop and recreate\nNo = Append\nCancel = Abort")
+            if choice is None:
+                return
+            elif choice:
+                importer.drop_table(table_name)
+                importer.create_table(table_name, df)
+            else:
+                existing_cols = importer.get_existing_columns(table_name)
+                df = df[[col for col in df.columns if col in existing_cols]]
+        else:
+            importer.create_table(table_name, df)
 
+        importer.insert_data(table_name, df)
+        importer.conn.commit()
         messagebox.showinfo("Success", f"✅ Imported {len(df)} rows into '{table_name}'")
-        update_preview(df)
+        update_preview(df.head(preview_count))
 
     except Exception as e:
-        print(f"\n❌ ERROR: {e}")
+        logging.error(f"Import failed: {traceback.format_exc()}")
         messagebox.showerror("Import failed", f"❌ Error: {e}")
     finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
+        importer.close()
+
 
 def update_preview(df):
     for widget in preview_frame.winfo_children():
         widget.destroy()
 
-    preview_table = ttk.Treeview(preview_frame)
+    vsb = tk.Scrollbar(preview_frame, orient="vertical")
+    hsb = tk.Scrollbar(preview_frame, orient="horizontal")
+
+    preview_table = ttk.Treeview(preview_frame, yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+    vsb.config(command=preview_table.yview)
+    hsb.config(command=preview_table.xview)
+    vsb.pack(side='right', fill='y')
+    hsb.pack(side='bottom', fill='x')
     preview_table.pack(expand=True, fill='both')
 
     preview_table["columns"] = list(df.columns)
@@ -160,15 +201,34 @@ def update_preview(df):
 
     for col in df.columns:
         preview_table.heading(col, text=col)
-        preview_table.column(col, width=150)
+        preview_table.column(col, width=150, stretch=True)
 
-    for _, row in df.head(10).iterrows():
+    for _, row in df.iterrows():
         preview_table.insert("", "end", values=list(row))
 
-# === GUI SETUP ===
+
+# === GUI ===
 app = tk.Tk()
-app.title("🧠 Excel/CSV to SQL Importer - Custom + Fallback")
-app.geometry("1000x600")
+app.title("Fibre2Fashion Excel/CSV to SQL Importer")
+app.geometry("1100x700")
+
+# Logo and title header
+header_frame = tk.Frame(app, bg="white")
+header_frame.pack(fill='x', padx=10, pady=(10, 5))
+
+try:
+    logo_img = Image.open("f2f-logo.png")
+    logo_img = logo_img.resize((100, 50))
+    logo = ImageTk.PhotoImage(logo_img)
+    tk.Label(header_frame, image=logo, bg="white").pack(side='left', padx=5)
+except Exception as e:
+    logging.warning(f"Logo load failed: {e}")
+
+tk.Label(header_frame, text="Fibre2Fashion Excel/CSV to SQL Importer", bg="white",
+         font=("Segoe UI", 16, "bold")).pack(side='left', padx=10)
+
+status_label = tk.Label(app, text="")
+status_label.pack(anchor='w', padx=10, pady=(5, 0))
 
 tk.Label(app, text="📂 Select File").pack(anchor='w', padx=10, pady=(10, 0))
 file_frame = tk.Frame(app)
@@ -181,9 +241,13 @@ tk.Label(app, text="📝 SQL Table Name").pack(anchor='w', padx=10, pady=(10, 0)
 table_entry = tk.Entry(app)
 table_entry.pack(fill='x', padx=10)
 
-tk.Button(app, text="🚀 Import to SQL Server", bg="#4CAF50", fg="white", command=import_data).pack(pady=10)
+tk.Label(app, text="🔍 Preview Rows").pack(anchor='w', padx=10, pady=(10, 0))
+preview_dropdown = ttk.Combobox(app, values=[10, 25, 50, 100], state='readonly')
+preview_dropdown.set(10)
+preview_dropdown.pack(fill='x', padx=10)
 
-tk.Label(app, text="🔍 Preview First 10 Rows").pack(anchor='w', padx=10)
+tk.Button(app, text="🚀 Import to SQL Server", width=20, bg="#4CAF50", fg="white", command=import_data).pack(pady=10)
+
 preview_frame = tk.Frame(app)
 preview_frame.pack(expand=True, fill='both', padx=10, pady=5)
 
