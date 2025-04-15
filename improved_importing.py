@@ -8,6 +8,7 @@ import logging
 import traceback
 import json
 from PIL import Image, ImageTk
+import xlrd
 
 # === LOAD CONFIG ===
 with open("config.json", "r") as f:
@@ -126,10 +127,12 @@ def read_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".csv":
         return pd.read_csv(file_path)
-    elif ext in [".xlsx", ".xls"]:
+    elif ext == ".xlsx":
         return pd.read_excel(file_path, engine='openpyxl')
+    elif ext == ".xls":
+        return pd.read_excel(file_path, engine='xlrd')
     else:
-        raise ValueError("Unsupported file format. Use .csv or .xlsx")
+        raise ValueError("Unsupported file format. Use .csv, .xlsx, or .xls")
 
 
 def browse_file():
