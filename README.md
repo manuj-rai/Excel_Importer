@@ -41,25 +41,34 @@ A lightweight desktop tool to import `.csv`, `.xlsx`, and `.xls` files directly 
 ```bash
 git clone https://github.com/manuj-rai/Imp_Excel_to_SQL.git
 cd Imp_Excel_to_SQL
+```
 
 ### 2. Set Up a Virtual Environment
 
+```bash
 python -m venv env
 env\Scripts\activate         # On Windows
 source env/bin/activate      # On macOS/Linux
+```
 
 ### 3. Install Python Dependencies
 
+```bash
 pip install -r requirements.txt
+```
 
-### 🔐 Configuration
+### 4. 🔐 Configuration
 
+```bash
 Create a config.json
 {
   "SQL_CONN_STR": "DRIVER={ODBC Driver 17 for SQL Server};SERVER=your_server;DATABASE=your_db;UID=your_user;PWD=your_password"
 }
+```
 
-### 🤝 Maintainers
+### 5. 🤝 Maintainers
 
+```bash
 Manuj Rai
 📧 [imanujrai7@gmail.com] (update if applicable)
+```
