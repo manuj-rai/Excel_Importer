@@ -1,4 +1,5 @@
 pandas
 pyodbc
-pillow
+openpyxl
 xlrd
+pillow

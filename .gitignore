@@ -1,6 +1,29 @@
-env/
+# Python cache
 __pycache__/
-*.pyc
-.DS_Store
-*.pkl
+*.py[cod]
+*.pyo
+
+# Logs
 *.log
+importer.log
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS/system files
+.DS_Store
+Thumbs.db
+
+# Virtual envs
+env/
+venv/
+ENV/
+
+# PyInstaller builds
+dist/
+build/
+*.spec
+
+# Config and credentials (if applicable)
+config.json
