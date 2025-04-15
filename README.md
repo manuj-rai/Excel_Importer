@@ -66,9 +66,7 @@ Create a config.json
 }
 ```
 
-### 5. 🤝 Maintainers
+### 5. 🤝 Maintainer
 
-```bash
-Manuj Rai
-📧 [imanujrai7@gmail.com] (update if applicable)
-```
+**Manuj Rai**  
+📧 [imanujrai7@gmail.com](mailto:imanujrai7@gmail.com)
