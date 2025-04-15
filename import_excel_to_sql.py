@@ -61,4 +61,3 @@ cursor.close()
 conn.close()
 
 print("✅ intertextile_vietnam combined data imported successfully into SQL Server.")
-
