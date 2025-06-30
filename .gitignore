@@ -26,4 +26,4 @@ build/
 *.spec
 
 # Config and credentials (if applicable)
-config.json
+.config.json
