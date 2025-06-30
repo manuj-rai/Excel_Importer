@@ -43,8 +43,8 @@ A lightweight desktop tool to import `.csv`, `.xlsx`, and `.xls` files directly 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/manuj-rai/Imp_Excel_to_SQL.git
-cd Imp_Excel_to_SQL
+git clone https://github.com/manuj-rai/Excel_Importer.git
+cd Excel_Importer
 ```
 
 ### 2. Set Up a Virtual Environment
