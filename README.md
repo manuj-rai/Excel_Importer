@@ -1,18 +1,20 @@
 # 📊 Excel/CSV to SQL Importer
 
-A lightweight desktop tool to import `.csv`, `.xlsx`, and `.xls` files directly into Microsoft SQL Server. Designed for ease of use by both technical and non-technical users, with features like data preview, table overwrite or append options, and automatic type mapping.
-
+A lightweight desktop tool to import `.csv`, `.xlsx`, and `.xls` files directly into **Microsoft SQL Server**. Built with Python and Tkinter, this GUI tool is designed for ease of use by both technical and non-technical users, providing **live preview**, **type detection**, **column mapping**, and **overwrite or append** options.
 ---
 
 ## ✨ Features
 
 - ✅ Import `.csv`, `.xlsx`, `.xls` files
 - ✅ Connects to SQL Server using ODBC
-- ✅ Automatically detects data types (INT, FLOAT, DATETIME, TEXT)
-- ✅ Option to **append** or **overwrite** existing tables
-- ✅ Live preview of imported data (first N rows)
-- ✅ Clean GUI with branding
-- ✅ Logging enabled for troubleshooting
+- ✅ Automatically maps data types (`INT`, `FLOAT`, `DATETIME`, `NVARCHAR(MAX)`)
+- ✅ Choose to **append** to or **overwrite** existing tables
+- ✅ Column mapping UI for existing SQL tables
+- ✅ Live data preview (first N rows)
+- ✅ Automatic column sanitization (removes spaces, special characters)
+- ✅ Optimized for batch insert (`fast_executemany`)
+- ✅ Modern GUI with logo branding (Tkinter + Pillow)
+- ✅ Error logging and fallback insert on failure
 
 ---
 
@@ -28,9 +30,11 @@ A lightweight desktop tool to import `.csv`, `.xlsx`, and `.xls` files directly 
 
 ## 🔧 Requirements
 
-- Python 3.8+
-- ODBC Driver 17 or higher for SQL Server  
-  ➤ [Download ODBC Driver for SQL Server](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server)
+- Python **3.8+**
+- **ODBC Driver 17** or higher for SQL Server  
+  ➤ [Download here](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server)
+- See `requirements.txt` for Python libraries
+
 
 ---
 
