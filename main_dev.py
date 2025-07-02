@@ -15,29 +15,6 @@ with open("config.json", "r") as f:
     config = json.load(f)
 SQL_CONN_STR = config["SQL_CONN_STR"]
 
-USE_CUSTOM_COLUMNS = False
-
-CUSTOM_COLUMNS = {
-    "contact_person": "NVARCHAR(255)",
-    "company": "NVARCHAR(255)",
-    "email": "NVARCHAR(255)",
-    "phone": "NVARCHAR(50)",
-    "city": "NVARCHAR(100)",
-    "zip": "NVARCHAR(20)"
-}
-
-EXCEL_TO_CUSTOM_MAP = {
-    "person": "contact_person",
-    "companyname": "company",
-    "emailid": "email",
-    "tel": "phone",
-    "location": "city",
-    "pincode": "zip"
-}
-
-logging.basicConfig(filename='importer.log', level=logging.INFO,
-                    format='%(asctime)s:%(levelname)s:%(message)s')
-
 
 class SQLImporter:
     def __init__(self, conn_str):
@@ -115,14 +92,6 @@ def clean_dataframe(df):
     return df
 
 
-def map_custom_columns(df):
-    df = df.rename(columns=EXCEL_TO_CUSTOM_MAP)
-    df = df[[col for col in CUSTOM_COLUMNS if col in df.columns]]
-    df = df.where(pd.notnull(df), None)
-    df = df.applymap(lambda x: str(x).strip() if pd.notnull(x) else None)
-    return df
-
-
 def read_file(file_path):
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".csv":
@@ -154,8 +123,6 @@ def import_data():
         df = read_file(file_path)
         df.columns = [sanitize_column_name(col) for col in df.columns]
         df = clean_dataframe(df)
-        if USE_CUSTOM_COLUMNS:
-            df = map_custom_columns(df)
 
         importer = SQLImporter(SQL_CONN_STR)
         importer.connect()
