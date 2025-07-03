@@ -15,26 +15,6 @@ with open("config.json", "r") as f:
     config = json.load(f)
 SQL_CONN_STR = config["SQL_CONN_STR"]
 
-USE_CUSTOM_COLUMNS = False
-
-CUSTOM_COLUMNS = {
-    "contact_person": "NVARCHAR(255)",
-    "company": "NVARCHAR(255)",
-    "email": "NVARCHAR(255)",
-    "phone": "NVARCHAR(50)",
-    "city": "NVARCHAR(100)",
-    "zip": "NVARCHAR(20)"
-}
-
-EXCEL_TO_CUSTOM_MAP = {
-    "person": "contact_person",
-    "companyname": "company",
-    "emailid": "email",
-    "tel": "phone",
-    "location": "city",
-    "pincode": "zip"
-}
-
 
 class SQLImporter:
     def __init__(self, conn_str):
@@ -50,12 +30,25 @@ class SQLImporter:
         if self.cursor: self.cursor.close()
         if self.conn: self.conn.close()
 
+    def full_table_name(self, full_name):
+        if '.' in full_name:
+            schema, table = full_name.split('.', 1)
+        else:
+            schema, table = 'dbo', full_name
+        return f"[{schema}].[{table}]"
+
     def table_exists(self, table_name):
-        self.cursor.execute(f"SELECT OBJECT_ID(N'{table_name}', N'U')")
-        return self.cursor.fetchone()[0] is not None
+        if '.' in table_name:
+            schema, table = table_name.split('.', 1)
+        else:
+            schema, table = 'dbo', table_name
+        self.cursor.execute("""
+            SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+        """, schema, table)
+        return self.cursor.fetchone() is not None
 
     def get_existing_columns(self, table_name):
-        """Returns list of tuples (column_name, data_type)"""
         self.cursor.execute(f"""
             SELECT c.name AS column_name, 
                    t.name AS data_type,
@@ -65,7 +58,7 @@ class SQLImporter:
             FROM sys.columns c
             JOIN sys.types t ON c.user_type_id = t.user_type_id
             WHERE c.object_id = OBJECT_ID(?)
-        """, table_name)
+        """, self.full_table_name(table_name))
         columns = []
         for row in self.cursor.fetchall():
             data_type = row.data_type
@@ -80,22 +73,22 @@ class SQLImporter:
         return columns
 
     def create_table(self, table_name, df):
-        if not re.match(r'^[a-zA-Z0-9_]+$', table_name):
-            raise ValueError("Invalid table name. Use only alphanumeric characters and underscores.")
+        if not re.match(r'^[a-zA-Z0-9_.]+$', table_name):
+            raise ValueError("Invalid table name. Use only alphanumeric characters, underscores, or dot.")
         column_defs = ",\n    ".join([f"[{col}] {map_dtype_to_sql(col, df[col])}" for col in df.columns])
-        create_sql = f"CREATE TABLE [{table_name}] (\n    {column_defs}\n);"
+        create_sql = f"CREATE TABLE {self.full_table_name(table_name)} (\n    {column_defs}\n);"
         logging.info(f"Creating table:\n{create_sql}")
         self.cursor.execute(create_sql)
         self.conn.commit()
 
     def drop_table(self, table_name):
-        self.cursor.execute(f"DROP TABLE [{table_name}]")
+        self.cursor.execute(f"DROP TABLE {self.full_table_name(table_name)}")
         self.conn.commit()
 
     def insert_data(self, table_name, df):
         columns = ", ".join(f"[{col}]" for col in df.columns)
         placeholders = ", ".join("?" for _ in df.columns)
-        insert_sql = f"INSERT INTO [{table_name}] ({columns}) VALUES ({placeholders})"
+        insert_sql = f"INSERT INTO {self.full_table_name(table_name)} ({columns}) VALUES ({placeholders})"
         try:
             self.cursor.fast_executemany = True
             self.cursor.executemany(insert_sql, df.values.tolist())
@@ -139,16 +132,6 @@ def clean_dataframe(df):
         df[col] = df[col].str.strip()
     
     return df
-
-
-def map_custom_columns(df):
-    # Only rename columns that exist in both
-    rename_map = {k: v for k, v in EXCEL_TO_CUSTOM_MAP.items() if k in df.columns}
-    df = df.rename(columns=rename_map)
-    
-    # Only keep columns that exist in both
-    keep_cols = [col for col in CUSTOM_COLUMNS if col in df.columns]
-    return df[keep_cols].where(pd.notnull(df), None)
 
 
 def read_file(file_path, preview_rows=None):
@@ -236,7 +219,11 @@ def map_columns(file_columns, existing_columns):
         confirmed = True
         for file_col, cb in comboboxes:
             selected = cb.get()
-            mapping[file_col] = selected.split(" ")[0] if selected != default_value else None
+            if selected != default_value:
+                selected_col = selected.rsplit(" (", 1)[0]  # Handles "Mobile Number (NVARCHAR(50))"
+                mapping[file_col] = selected_col
+            else:
+                mapping[file_col] = None
         mapping_window.destroy()
 
     ttk.Button(container, text="Apply Mapping", command=on_done, width=20).pack(pady=10)
@@ -248,7 +235,9 @@ def map_columns(file_columns, existing_columns):
 
 def import_data():
     file_path = file_entry.get().strip()
-    table_name = table_entry.get().strip()
+    table_input = table_entry.get().strip()
+    table_name = table_input.strip()
+    importer = SQLImporter(SQL_CONN_STR)
     preview_count = int(preview_dropdown.get())
 
     if not file_path or not table_name:
@@ -300,9 +289,6 @@ def import_data():
                 full_df = full_df.rename(columns={k: v for k, v in mapping.items() if v is not None})
                 # Remove columns mapped to None
                 full_df = full_df.drop(columns=[k for k, v in mapping.items() if v is None], errors="ignore")
-
-            if USE_CUSTOM_COLUMNS:
-                full_df = map_custom_columns(full_df)
 
             if not importer.table_exists(table_name):
                 status_label.config(text="🛠 Creating table...", foreground="blue")
